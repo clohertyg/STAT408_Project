@@ -1,0 +1,439 @@
+---
+title: "STAT 408 Project"
+author: "Grace Cloherty"
+format: html
+editor: visual
+---
+
+## Reading in the Data
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(dplyr)
+library(lmtest)
+library(regclass)
+library(car)
+library(usmap)
+library(knitr)
+
+```
+
+```{r}
+# Reading in the data
+NTD <- read.csv("Data/2022_-_2023_NTD_Annual_Data_-_Metrics_20241113.csv")
+# Remove columns with 'Questionable'
+NTD <- NTD %>% 
+  dplyr::select(-contains(".Questionable"))
+```
+
+## Filtering Data
+
+```{r}
+midwest_NTD <- NTD %>% 
+  filter(State == "IL" | State == "IN" | State == "IA" | State == "KS" | State == "MI" | State == "MN" | State == "MO" | State == "NE" | State == "ND" | State == "OH" | State == "SD" | State == "WI" )
+
+```
+
+## Unlinked Passenger Trips
+
+Poisson Regression since Unlinked Passenger Trips is count data in a given year.
+
+-   Tried quadratic and other linear models with transformations, but those didn't work either. So sticking with Poisson.
+
+### Poisson Model
+
+I tested whether this overall Poisson regression model is statistically significant.
+
+-   Reduced Model: $\hat{Unlinked.Passenger.Trips} = \beta_0$
+
+-   Full Model: $\hat{Unlinked.Passenger.Trips} =  \beta_0 + \beta_1{Fare.Revenues.per.Unlinked.Passenger.Trip} + \beta_2{Cost.per.Hour} + \beta_3{Passengers.per.Vehicle.Revenue.Hour} + \beta_4{Cost.per.Passenger} + \beta_5{Cost.per.Passenger.Mile} + \beta_6{Vehicle.Revenue.Hours} + \beta_7{Passenger.Miles}$
+
+-   $H_0: \beta_i = 0 \text{ for i = 1, 2, 3,4 }$
+
+-   $H_a: \text{ at least one } \beta_i \neq 0$
+
+    -   $\chi^2 = 6496007376 , p-value = 0$, so we reject the null hypothesis.
+
+First, I fit a Poisson model with all non-overlapping numerical variables and mode (categorical) within the dataset predicting count of unlinked passenger trips in a year (10 predictors). When plotting this base model, I removed three influential points from the dataset that were apparent in the residual plots. Within this model, there are variables with high multicollinearity, so I removed them one at a time by highest VIF value. After this process, the model includes 5 predictors, with VIF values all below 4. Second, I used a backwards selection on the model, but had errors in fixing issues of convergence, so I continued to use the Poisson model with 5 predictors selected through the VIF threshold.
+
+The residual plots show this model violates the assumptions of homoscedasticity; the residual plot shows a clear unequal spread of variance. To account for this, we've learned transformation methods. However, we can't perform a log transformation because we have multiple observations where passenger trips = 0. We also can't perform square root transformation on the response variable, because non-integers result. Because we are performing Poisson regression, R is expecting counts, therefore integers, as the response variable. These two errors limit the potential transformations that can be done on this Poisson model. Although the model violates the assumption of homoscedasticity when using the Breusch-Pagan test, it is still a significant model, as seen through our hypothesis testing: $\chi^2 = 6496007376 , p-value = 0$, so we reject the null hypothesis. We conclude that our Poisson regression model predicting number of passenger trips by fare revenues per trip, passengers per hour, cost per passenger mile, total operating expenses, and passenger miles is statistically significant.
+
+In an attempt to even out the spread of residuals, I then tested if the model would improve (or the spread of residuals become more constant) by adding polynomial terms. I tested each squared term one by one, and found that adding the squared term for total operating expenses and passengers per vehicle revenue hour improved the spread of residuals. When testing if adding $Total.Operating.Expenses^2$ was significant, ANOVA was used between this new model and the baseline model without higher order polynomial terms. We conclude that adding the squared term is statistically significant ($p = 0$). I then tested whether adding $Passengers.per.Vehicle.Revenue.Hour^2$ to the previous model was statistically significant, and $p = 0$, so I added this term to the model. I continued this with cubed terms, and found that adding $Passengers.per.Vehicle.Revenue.Hour^3$ was statistically significant, but $Total.Operating.Expenses^3$ did not help the spread of residuals. This was the highest-order term that was added to the model. The assumption of homoscedasticity is still violated according to the Breusch-Pagan Test ($p < 0.001$). However, when looking at the residual plot, the residuals have a much more equal and constant spread than the model without any polynomial terms. In testing if adding these polynomial terms is statistically significant, we find that $Deviance = 1.177 \times 10^9, p = 0$. We reject the null hypothesis and conclude that adding $Total.Operating.Expenses^2$, $Passengers.per.Vehicle.Revenue.Hour^2$, and $Passengers.per.Vehicle.Revenue.Hour^3$ is statistically significant. We see the residual plot below, and although the spread still has some clustering, it is more more evenly spread. Our result is the following regression line:
+
+$$
+\hat{Unlinked.Passenger.Trips} = 10.95 - 0.2403Fare.Revenues.per.Unlinked.Passenger.Trip + 0.2985Passengers.per.Vehicle.Revenue.Hour\\ - 0.00923Cost.per.Passenger.Mile + (1.36 \times 10^{-8})Total.Operating.Expenses \\- (1.816 \times 10^{-9})Passenger.Miles - (9.193 \times 10^{-18})Total.Operating.Expenses^2 \\- 0.006698Passengers.per.Vehicle.Revenue.Hour^2 + 0.00004323Passengers.per.Vehicle.Revenue.Hour^3
+$$
+
+Interpretations:
+
+-   Total Operating Expenses
+
+    -   Interpreting Total Operating Expenses means including both the linear and quadratic term, so we can account for this combined effect.
+
+    -   Holding all other variables constant, as total operating expenses increases by one, the log average of passenger trips changes by $1.36 \times 10^{-8}$ for one dollar increase in the linear term and $- 9.193 \times 10^{-18}$ for the quadratic term. This indicates that the log average increases up to a certain extent, then begins to decrease again, following a diminishing-returns-like shape when it comes to operating expenses and ridership levels. If we follow this logic, this makes sense! To some extent, spending money on these expenses, like maintenance, refurbishing, updating costs all would draw in more riders. However, spending too much money means the costs have to be covered somehow, which might lead to increase in ticket prices, for example. These are very small coefficients, which might lead readers to believe that this result would not impact the log average passenger trips, however, when dealing with expenses, we expect to see high values. The average total operating expense is \$7,329,817. The context of each coefficient is important.
+
+-   Passengers per Vehicle Revenue Hour
+
+    -   Passenger per vehicle revenue hour has linear, quadratic, and cubic terms in this regression line, so the relationship is clearly nonlinear. The linear term coefficient is positive (0.2985), the quadratic term coefficient is negative (-0.006698), and the cubic term coefficient is positive (0.00004323), all in decreasing absolute values. If this were graphed, an initial increase in log average number of passenger trips, followed by a smaller decrease, and eventually another increase of even smaller magnitude would be depicted. There are certain ranges of passengers per vehicle revenue hour where we see increases in log average passenger trips and certain ranges show decreases in log average passenger trips, holding all unrelated variables constant.
+
+-   Fare Revenues per Unlinked Passenger Trip
+
+    -   The log of the average number of passenger trips decreases by 0.2403 when fare revenues per trip increases by one dollar, holding all other variables constant. The average number of passenger trips changes by a factor of $e^{-0.2403} = 0.7864$ when fare revenues per trip increases by one dollar, holding all other variables constant.
+
+    -   This relationship between the log average trips and fare revenue per trip indicates that higher fares coincide with lower fare revenue. This term has one of the highest coefficient values of the regression line, so it may have a strong influence on predicting passenger trips compared to the other factors in the model. If fare revenues increase, we would certainly expect to see ridership levels take a hit from that.
+
+-   Cost.per.Passenger.Mile
+
+    -   The log of the average number of passenger trips decreases by 0.00923 when cost per passenger per mile increases by one dollar, holding all other variables constant. The average number of passenger trips changes by a factor of $e^{-0.00923} = 0.9908$ when cost per passenger per mile increases by one dollar, holding all other variables constant.
+
+    -   This relationship between the log average trips and cost per passenger per mile indicates that higher operating costs relate to lower ridership. This relationship is more complex, in my opinion, because the causes may be indirect. A raise in operating costs can come from many different sources, and certainly can be necessary, like maintence costs. On the surface, these types of costs could attract more riders. On the other hand, high operating costs can raise ticket prices, and therefore indirectly deter riders from using these services. Of course, any direct causes are outside the scope of analysis.
+
+    -   Like previously mentioned, perhaps high operating costs can raise ticket prices, and indirectly lower ridership levels. But the direct causes are outside the scope of this analysis.
+
+-    Passenger.Miles
+
+    -   The log of the average number of passenger trips decreases by $1.816 \times 10^{-9}$ when passenger miles increases by one mile, holding all other variables constant. The average number of passenger trips changes by a factor of $e^{1.816 \times 10^{-9}} = 1$ when fare revenues per trip increases by one dollar, holding all other variables constant. The predicted values do not change much, unless we are dealing in extreme values of passenger miles.
+
+    -   This relationship between the log average trips and passenger miles indicates that while there is a negative relationship, the impact is may be quite small unless dealing with high mileage. The average passenger miles is 3,308,909 miles, so quite a high number. In the context of the problem, it still might be as impactful to the log average number of passenger trips as other variables are.
+
+```{r}
+# original model with all predictors
+unlinked_mod_poisson_max <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip +
+                              Cost.per.Hour  + Passengers.per.Vehicle.Revenue.Hour + Cost.per.Passenger.Mile +
+                              Fare.Revenues.Earned + Total.Operating.Expenses + Vehicle.Revenue.Hours + Passenger.Miles
+                            + Vehicle.Revenue.Miles + State + Mode
+  , data = midwest_NTD, family = poisson)
+
+unlinked_mod_poisson <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip +
+                              Cost.per.Hour  + Passengers.per.Vehicle.Revenue.Hour + Cost.per.Passenger.Mile +
+                              Total.Operating.Expenses + State
+                            , data = midwest_NTD, family = poisson)
+
+summary(unlinked_mod_poisson)
+plot(unlinked_mod_poisson,1)
+VIF(unlinked_mod_poisson) # removed factors with high collinearity: Fare,Revenues.Earned, Total.Operating.Expenses, Vehicle.Revenue.Miles
+
+unlinked_mod_poisson_best <- step(unlinked_mod_poisson, direction = "backward", trace = 0)
+summary(unlinked_mod_poisson_best) # same model
+
+bptest(unlinked_mod_poisson_best)
+
+# Remove Outliers
+midwest_NTD_filt <- midwest_NTD[-c(660,765,1711), ]
+unlinked_mod_poisson2 <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip  + Passengers.per.Vehicle.Revenue.Hour 
+                             + Cost.per.Passenger.Mile + Total.Operating.Expenses + Passenger.Miles
+                            , data = midwest_NTD_filt, family = poisson)
+# fails homoscedasticity
+plot(unlinked_mod_poisson2, 1)
+bptest(unlinked_mod_poisson2)
+
+# summary and hypothesis test
+summary(unlinked_mod_poisson2)
+VIF(unlinked_mod_poisson2)
+X <- summary(unlinked_mod_poisson2)$null - summary(unlinked_mod_poisson2)$deviance
+p <- pchisq(X, df = 5, lower.tail=F)
+X
+p
+
+# add polynomial terms:
+
+# total expenses
+unlinked_mod_poisson_poly <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip  + Passengers.per.Vehicle.Revenue.Hour 
+                             + Cost.per.Passenger.Mile + Total.Operating.Expenses + Passenger.Miles + I(Total.Operating.Expenses^2) 
+                            , data = midwest_NTD_filt, family = poisson)
+plot(unlinked_mod_poisson_poly, 1)
+bptest(unlinked_mod_poisson_poly)
+summary(unlinked_mod_poisson_poly)
+anova(unlinked_mod_poisson2 , unlinked_mod_poisson_poly)
+pchisq(814175075,  1, lower.tail = F)
+# Adding Total Expenses Squared is statistically significant
+
+unlinked_mod_poisson_poly2 <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip  + Passengers.per.Vehicle.Revenue.Hour 
+                             + Cost.per.Passenger.Mile + Total.Operating.Expenses + Passenger.Miles + I(Total.Operating.Expenses^2)
+                             + I(Cost.per.Passenger.Mile^2) 
+                            , data = midwest_NTD_filt, family = poisson)
+plot(unlinked_mod_poisson_poly2, 1)
+bptest(unlinked_mod_poisson_poly2)
+summary(unlinked_mod_poisson_poly2)
+anova(unlinked_mod_poisson_poly , unlinked_mod_poisson_poly2)
+pchisq(-0.00000003,  1, lower.tail = F)
+# Adding Cost Per Passenger Miles did not help the residual plot
+
+unlinked_mod_poisson_poly3 <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip  + Passengers.per.Vehicle.Revenue.Hour 
+                             + Cost.per.Passenger.Mile + Total.Operating.Expenses + Passenger.Miles + I(Total.Operating.Expenses^2) + I(Passengers.per.Vehicle.Revenue.Hour^2) 
+                            , data = midwest_NTD_filt, family = poisson)
+plot(unlinked_mod_poisson_poly3, 1)
+bptest(unlinked_mod_poisson_poly3)
+summary(unlinked_mod_poisson_poly3)
+anova(unlinked_mod_poisson_poly2 , unlinked_mod_poisson_poly3)
+pchisq(308702706 ,  1, lower.tail = F)
+# Adding Passengers.per.Vehicle.Revenue.Hour^2 was  statistically significant and helped residual spread
+
+unlinked_mod_poisson_poly4 <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip  + Passengers.per.Vehicle.Revenue.Hour 
+                             + Cost.per.Passenger.Mile + Total.Operating.Expenses + Passenger.Miles + I(Total.Operating.Expenses^2) 
+                             + I(Passengers.per.Vehicle.Revenue.Hour^2) + I(Fare.Revenues.per.Unlinked.Passenger.Trip^2) 
+                            , data = midwest_NTD_filt, family = poisson)
+plot(unlinked_mod_poisson_poly4, 1)
+bptest(unlinked_mod_poisson_poly4)
+summary(unlinked_mod_poisson_poly4)
+anova(unlinked_mod_poisson_poly3 , unlinked_mod_poisson_poly4)
+pchisq(308702706 ,  1, lower.tail = F)
+# Adding Fare.Revenues.per.Unlinked.Passenger.Trips did not help residuals
+
+
+# Adding cubed values for those with squared values
+
+# Passengers.per.Vehicle.Revenue.Hour
+unlinked_mod_poisson_poly31 <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip  + Passengers.per.Vehicle.Revenue.Hour 
+                             + Cost.per.Passenger.Mile + Total.Operating.Expenses + Passenger.Miles + I(Total.Operating.Expenses^2) 
+                             + I(Passengers.per.Vehicle.Revenue.Hour^2) +  I(Passengers.per.Vehicle.Revenue.Hour^3) 
+                            , data = midwest_NTD_filt, family = poisson)
+plot(unlinked_mod_poisson_poly31, 1)
+bptest(unlinked_mod_poisson_poly31)
+summary(unlinked_mod_poisson_poly31)
+anova(unlinked_mod_poisson_poly3 , unlinked_mod_poisson_poly31)
+pchisq(54093118  ,  1, lower.tail = F)
+# Did help residual plot and is statistically significant; adding operating expenses did NOT help
+
+
+# Passengers.per.Vehicle.Revenue.Hour
+unlinked_mod_poisson_poly32 <- glm(Unlinked.Passenger.Trips ~ Fare.Revenues.per.Unlinked.Passenger.Trip  + Passengers.per.Vehicle.Revenue.Hour 
+                             + Cost.per.Passenger.Mile + Total.Operating.Expenses + Passenger.Miles + I(Total.Operating.Expenses^2) 
+                             + I(Passengers.per.Vehicle.Revenue.Hour^2) +  I(Passengers.per.Vehicle.Revenue.Hour^3) +  I(Passengers.per.Vehicle.Revenue.Hour^4)
+                            , data = midwest_NTD_filt, family = poisson)
+plot(unlinked_mod_poisson_poly32, 1)
+bptest(unlinked_mod_poisson_poly32)
+summary(unlinked_mod_poisson_poly32)
+anova(unlinked_mod_poisson_poly31 , unlinked_mod_poisson_poly32)
+pchisq(54093118  ,  1, lower.tail = F)
+# Adding ^4 term did not help
+```
+
+### Final Model
+
+```{r}
+# Final Test of polynomial model vs. basic model
+anova(unlinked_mod_poisson2, unlinked_mod_poisson_poly31)
+pchisq(1177000000  ,  3, lower.tail = F)
+
+summary(unlinked_mod_poisson_poly31)
+
+final_mod <- unlinked_mod_poisson_poly31
+plot(final_mod,1)
+```
+
+### Correlations Matrix
+
+```{r}
+
+correlations_model <- cor(midwest_NTD[, c("Fare.Revenues.per.Unlinked.Passenger.Trip",  
+                                         "Passengers.per.Vehicle.Revenue.Hour",
+                                         "Cost.per.Passenger.Mile", 
+                                         "Total.Operating.Expenses", "Unlinked.Passenger.Trips",
+                                         "Passenger.Miles",
+                                     "Primary.UZA.Population"
+                                    )], use = "complete.obs")
+print(correlations_model)
+```
+
+#### High correlations:
+
+-   Total Operating Expenses and Unlinked Passenger Trips: r = 0.9004
+
+-   Total Operating Expenses and Passenger Miles: r = 0.9130
+
+-   Unlinked Passenger Trips and Passenger Miles: r = 0.8434 (makes sense, measuring similar construct of ridership levels)
+
+#### Moderate Correlations:
+
+-   Total Operating Expenses and Primary UZA Population: r = 0.3936
+
+-   Passenger Miles and Primary UZA Population: r = 0.3720
+
+## Exploratory Data Analysis
+
+### Graphs
+
+Variables: Unlinked.Passenger.Trips \~ Fare.Revenues.per.Unlinked.Passenger.Trip + Passengers.per.Vehicle.Revenue.Hour + Cost.per.Passenger.Mile + Total.Operating.Expenses + Passenger.Miles
+
+#### Scatterplots of IVs
+
+```{r}
+ggplot(data = midwest_NTD_filt, aes(x = Fare.Revenues.per.Unlinked.Passenger.Trip, y = Unlinked.Passenger.Trips)) + geom_point()
+# clustering around the lower left corner (origin) 
+
+ggplot(data = midwest_NTD_filt, aes(x = Passengers.per.Vehicle.Revenue.Hour, y = Unlinked.Passenger.Trips)) + geom_point()
+# most points fall along the line except for some influential points that skew the rest of the graph. Seeing nonlinear pattern and positive relationship
+
+ggplot(data = midwest_NTD_filt, aes(x = Cost.per.Passenger.Mile, y = Unlinked.Passenger.Trips)) + geom_point()
+# clustering around the lower left corner (origin) 
+
+ggplot(data = midwest_NTD_filt, aes(x = Total.Operating.Expenses, y = Unlinked.Passenger.Trips)) + geom_point()
+# positive relationship, potentially nonlinear
+
+ggplot(data = midwest_NTD_filt, aes(x = Passenger.Miles , y = Unlinked.Passenger.Trips)) + geom_point()
+# positive relationship, potentially nonlinear
+```
+
+```{r}
+midwest_NTD_long <- midwest_NTD_filt %>%
+  pivot_longer(cols = c(Fare.Revenues.per.Unlinked.Passenger.Trip, 
+                        Passengers.per.Vehicle.Revenue.Hour, 
+                        Cost.per.Passenger.Mile, 
+                        Total.Operating.Expenses, 
+                        Passenger.Miles),
+               names_to = "Variable",
+               values_to = "Value")
+
+# faceted scatterplots
+ggplot(data = midwest_NTD_long, aes(x = Value, y = Unlinked.Passenger.Trips)) +
+  geom_point() +
+  facet_wrap(~ Variable, scales = "free_x") + 
+  theme_minimal() +
+  labs(x = "Value of Predictor", 
+       y = "Unlinked Passenger Trips", 
+       title = "Scatterplots of Predictors by Unlinked Passenger Trips") +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    strip.text = element_text(size = 8, face = "bold"),
+    axis.title = element_text(size = 9), 
+    axis.text = element_text(size = 9)
+  )
+
+```
+
+#### Distribution of Passenger Trips
+
+Distribution is heavily right-skewed.
+
+```{r}
+ggplot(data = midwest_NTD, aes(x = Unlinked.Passenger.Trips)) +
+  geom_histogram(binwidth = 1000000, fill = 'darkorchid4', color = 'black') + 
+  scale_x_continuous(limits = c(0, 25000000)) +
+  scale_y_continuous(limits = c(0, 60)) +
+  labs(title = "Distribution of Passenger Trips") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+
+```
+
+#### Passenger Trips by Mode
+
+-   We see that Mode = Heavy Rail has the highest median and mean number of passenger trips (mean = 56,813,122.25), followed by Commuter Rail (7,360,955.12) and Light Rail (6,971,618.33), as seen in the box plots and table.
+
+-   However, Mode = Bus (MB) has the highest total passenger trips, as seen in the bar chart. This is very interesting because we see that buses are used more frequently than any other mode of transportation across all observations. Yet, heavy rail still has the highest average trips across all observations. This may be because of outliers - we can see in the boxplot for bus (MB), that there are multiple points outside of the IQR that make up the actual plot. These points may represent Chicago, where we know buses are widely available. In North Dakota, for example, buses might not be as prevalent. So, in these concentrated areas, we have more frequent bus usage, creating a higher overall count. Another factor is length of trip. We tend to use buses for inter-neighborhood travel. Short, but frequent, trips can also drive up the number of trips for these extreme values. However, across the dataset, and therefore across the midwest, heavy rail has the highest average number of passenger trips.
+
+```{r}
+# Use the boxplot
+ggplot(midwest_NTD, aes(x = Mode, y = Unlinked.Passenger.Trips)) +
+  geom_boxplot(fill = "goldenrod") +
+  labs(title = "Boxplots of Passenger Trips by Mode") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(midwest_NTD, aes(x = Mode, y = Unlinked.Passenger.Trips, fill = TOS)) + 
+  geom_bar(stat = "identity", fill = 'midnightblue') +
+  scale_fill_discrete() +
+  labs(title = "Total Number of Passenger Trips by Mode") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+midwest_NTD %>% 
+  group_by(Mode) %>% 
+  summarize(mean = mean(Unlinked.Passenger.Trips), min = min(Unlinked.Passenger.Trips), max = max(Unlinked.Passenger.Trips)) %>% 
+  arrange(desc(mean))
+```
+
+Include both graphs, not table
+
+#### Passenger Trips by State
+
+US Map!
+
+```{r}
+group_midwest <- midwest_NTD %>% 
+  group_by(State) %>% 
+  summarize(Total.Trips = sum(Unlinked.Passenger.Trips))
+
+plot_data <- usmap::us_map("state") %>% 
+  left_join(group_midwest, by = c("abbr" = "State"))
+
+plot_usmap(include = .midwest_region, data = plot_data, values = "Total.Trips", labels = T) +
+  scale_fill_gradient(low = "antiquewhite", high = "darkgreen", name = "Passenger Trips") + 
+  labs(title = "Count of Passenger Trips by State") +
+  theme(plot.title = element_text(hjust = 0.8)) +
+  theme_minimal()
+```
+
+### Summary Stats on Unlinked Passenger Trips
+
+```{r}
+summary_stats <- midwest_NTD %>%
+  summarise(
+    Mean = mean(Unlinked.Passenger.Trips, na.rm = TRUE),
+    Median = median(Unlinked.Passenger.Trips, na.rm = TRUE),
+    Std_Dev = sd(Unlinked.Passenger.Trips, na.rm = TRUE),
+    Min = min(Unlinked.Passenger.Trips, na.rm = TRUE),
+    Max = max(Unlinked.Passenger.Trips, na.rm = TRUE),
+    Range = max(Unlinked.Passenger.Trips, na.rm = TRUE) - min(Unlinked.Passenger.Trips, na.rm = TRUE),
+    Q1 = quantile(Unlinked.Passenger.Trips, 0.25, na.rm = TRUE),
+    Q3 = quantile(Unlinked.Passenger.Trips, 0.75, na.rm = TRUE),
+  )
+knitr::kable(summary_stats, format = "pandoc", caption = "Summary Statistics of Passenger Trips")
+
+
+# frequency tables for categorical variables
+mode_freq <- table(midwest_NTD$Mode)
+TOS_freq <- table(midwest_NTD$TOS)
+
+# correlations
+# Correlations between predictor variables
+correlations <- cor(midwest_NTD[, c("Fare.Revenues.per.Unlinked.Passenger.Trip", "Cost.per.Hour", 
+                                         "Passengers.per.Vehicle.Revenue.Hour", "Cost.per.Passenger",
+                                         "Cost.per.Passenger.Mile", "Fare.Revenues.Earned",
+                                         "Total.Operating.Expenses", "Unlinked.Passenger.Trips",
+                                         "Vehicle.Revenue.Hours","Passenger.Miles",
+                                    "Vehicle.Revenue.Miles", "Primary.UZA.Population"
+                                    )], use = "complete.obs")
+
+print(summary_stats)
+print(mode_freq)
+print(TOS_freq)
+# print(correlations) # maybe only look at correlations of variables that you keep in your model
+
+
+```
+
+#### Graphing Frequency Counts
+
+```{r}
+# Mode
+ggplot(data = as.data.frame(mode_freq), aes(x=Var1, y = Freq)) + 
+  geom_bar(stat = "identity", fill = "firebrick4") + 
+  geom_text(aes(label = Freq), vjust = -0.3, color = "black") +
+  labs(title = "Frequency of Unlinked Passenger Trips by Mode") +
+  xlab(label = "Mode") +
+  ylab(label = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+
+# Agency
+ggplot(data = as.data.frame(TOS_freq), aes(x=Var1, y = Freq)) + 
+  geom_bar(stat = "identity", fill = "chocolate3") + 
+  geom_text(aes(label = Freq), vjust = -0.3, color = "black") +
+  labs(title = "Frequency of Unlinked Passenger Trips by TOS") +
+  xlab(label = "Type of Service") +
+  ylab(label = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+While HR has the highest median number of passenger trips, DR is the most frequent. The definition of unlinked passenger trips is the number of boardings, so people ride DR modes of transit the most often. Demand response modes of transit means that it does not have a schedule (i.e., responds to demand). The most common example is paratransit bus programs. So, the fact that it is the most frequently used implies that this program is important to many people who rely on these services! Also, it yet again highlights the importance of understanding the many distinctions within this dataset.
+
+DO: Directly operated
+
+PT: Purchased Transportation - General
+
+TN: Purchased Transportation - Transportation Network Company
+
+TX: Purchased Transportation - Taxi
